@@ -1,95 +1,124 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { authenticateUser, createUser, hashPassword } from "@/lib/auth";
+import { type User as DBUser, db } from "@/lib/db";
+import {
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 interface User {
-  id: string;
+  id: number;
   email: string;
   name: string | null;
   region: string;
   currency: string;
-  createdAt: string;
+  createdAt: Date;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register: (email: string, password: string, name?: string, region?: string, currency?: string) => Promise<{ success: boolean; error?: string }>;
+  login: (
+    email: string,
+    password: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  register: (
+    email: string,
+    password: string,
+    name?: string,
+    region?: string,
+    currency?: string,
+  ) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const SESSION_KEY = "piggybank_session";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const refreshSession = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auth/session");
-      const data = await res.json();
-      if (data.authenticated) {
-        setUser(data.user);
-      } else {
-        setUser(null);
-      }
-    } catch {
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    refreshSession();
-  }, [refreshSession]);
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setUser(parsed);
+      } catch {
+        localStorage.removeItem(SESSION_KEY);
+      }
+    }
+    setIsLoading(false);
+  }, []);
 
   const login = async (email: string, password: string) => {
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setUser(data.user);
+      const authenticatedUser = await authenticateUser(email, password);
+      if (authenticatedUser) {
+        const userData = {
+          id: authenticatedUser.id as number,
+          email: authenticatedUser.email,
+          name: authenticatedUser.name ?? null,
+          region: authenticatedUser.region,
+          currency: authenticatedUser.currency,
+          createdAt: authenticatedUser.createdAt,
+        };
+        setUser(userData);
+        localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
         return { success: true };
       }
-      return { success: false, error: data.error };
-    } catch {
-      return { success: false, error: "Network error" };
+      return { success: false, error: "Invalid credentials" };
+    } catch (error) {
+      console.error("Login error:", error);
+      return { success: false, error: "Login failed" };
     }
   };
 
-  const register = async (email: string, password: string, name?: string, region?: string, currency?: string) => {
+  const register = async (
+    email: string,
+    password: string,
+    name?: string,
+    region?: string,
+    currency?: string,
+  ) => {
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, name, region, currency }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const loginResult = await login(email, password);
-        return loginResult;
+      const existing = await db.users.where("email").equals(email).first();
+      if (existing) {
+        return { success: false, error: "Email already registered" };
       }
-      return { success: false, error: data.error };
-    } catch {
-      return { success: false, error: "Network error" };
+
+      const newUser = await createUser(email, password, name, region, currency);
+      if (newUser) {
+        const userData = {
+          id: newUser.id as number,
+          email: newUser.email,
+          name: newUser.name ?? null,
+          region: newUser.region,
+          currency: newUser.currency,
+          createdAt: newUser.createdAt,
+        };
+        setUser(userData);
+        localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
+        return { success: true };
+      }
+      return { success: false, error: "Registration failed" };
+    } catch (error) {
+      console.error("Register error:", error);
+      return { success: false, error: "Registration failed" };
     }
   };
 
   const logout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      setUser(null);
-    } catch {
-      setUser(null);
-    }
+    setUser(null);
+    localStorage.removeItem(SESSION_KEY);
   };
 
   return (
@@ -101,7 +130,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         register,
         logout,
-        refreshSession,
       }}
     >
       {children}

@@ -1,11 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { format } from "date-fns";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -18,25 +15,29 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ExpenseForm } from "./expense-form";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { db } from "@/lib/db";
+import { format } from "date-fns";
+import { useState } from "react";
 import { toast } from "sonner";
+import { ExpenseForm } from "./expense-form";
 
 interface Category {
-  id: string;
+  id?: number;
   name: string;
   icon: string;
   color: string;
 }
 
 interface Expense {
-  id: string;
+  id?: number;
   amount: number;
-  description: string | null;
-  date: string;
-  categoryId: string;
-  category: Category;
-  receiptUrl: string | null;
-  createdAt: string;
+  description?: string;
+  date: Date;
+  categoryId: number;
+  category?: Category;
+  receiptUrl?: string;
+  createdAt: Date;
 }
 
 interface ExpenseListProps {
@@ -54,11 +55,16 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   AUD: "A$",
 };
 
-export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" }: ExpenseListProps) {
+export function ExpenseList({
+  expenses,
+  categories,
+  onRefresh,
+  currency = "USD",
+}: ExpenseListProps) {
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
-  
+
   const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
-  
+
   const formatAmount = (amount: number) => {
     if (currency === "IDR") {
       return `${currencySymbol}${amount.toLocaleString("id-ID", { minimumFractionDigits: 0 })}`;
@@ -66,12 +72,11 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
     return `${currencySymbol}${amount.toFixed(2)}`;
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this expense?")) return;
 
     try {
-      const res = await fetch(`/api/expenses/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete");
+      await db.expenses.delete(id);
       toast.success("Expense deleted");
       onRefresh();
     } catch {
@@ -79,16 +84,21 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
     }
   };
 
-  const groupedExpenses = expenses.reduce((acc, expense) => {
-    const dateKey = format(new Date(expense.date), "yyyy-MM-dd");
-    if (!acc[dateKey]) {
-      acc[dateKey] = [];
-    }
-    acc[dateKey].push(expense);
-    return acc;
-  }, {} as Record<string, Expense[]>);
+  const groupedExpenses = expenses.reduce(
+    (acc, expense) => {
+      const dateKey = format(new Date(expense.date), "yyyy-MM-dd");
+      if (!acc[dateKey]) {
+        acc[dateKey] = [];
+      }
+      acc[dateKey].push(expense);
+      return acc;
+    },
+    {} as Record<string, Expense[]>,
+  );
 
-  const sortedDates = Object.keys(groupedExpenses).sort((a, b) => b.localeCompare(a));
+  const sortedDates = Object.keys(groupedExpenses).sort((a, b) =>
+    b.localeCompare(a),
+  );
 
   if (expenses.length === 0) {
     return (
@@ -104,7 +114,10 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
 
   return (
     <>
-      <ScrollArea data-design-id="expense-list-scroll" className="h-[calc(100vh-320px)]">
+      <ScrollArea
+        data-design-id="expense-list-scroll"
+        className="h-[calc(100vh-320px)]"
+      >
         <div className="space-y-6 pr-4">
           {sortedDates.map((dateKey) => {
             const dayExpenses = groupedExpenses[dateKey];
@@ -116,8 +129,12 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
                 <div className="flex items-center justify-between mb-3 sticky top-0 bg-background/95 backdrop-blur-sm py-2 z-10">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-secondary flex flex-col items-center justify-center text-xs">
-                      <span className="font-bold text-foreground">{format(dateObj, "d")}</span>
-                      <span className="text-muted-foreground uppercase">{format(dateObj, "EEE")}</span>
+                      <span className="font-bold text-foreground">
+                        {format(dateObj, "d")}
+                      </span>
+                      <span className="text-muted-foreground uppercase">
+                        {format(dateObj, "EEE")}
+                      </span>
                     </div>
                     <span className="text-sm text-muted-foreground">
                       {format(dateObj, "MMMM yyyy")}
@@ -137,16 +154,22 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
                       <div className="flex items-center gap-4">
                         <div
                           className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shrink-0"
-                          style={{ backgroundColor: `${expense.category.color}20` }}
+                          style={{
+                            backgroundColor: `${expense.category?.color}20`,
+                          }}
                         >
-                          {expense.category.icon}
+                          {expense.category?.icon}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{expense.category.name}</span>
+                            <span className="font-medium">
+                              {expense.category?.name}
+                            </span>
                             {expense.receiptUrl && (
                               <button
-                                onClick={() => setViewingReceipt(expense.receiptUrl)}
+                                onClick={() =>
+                                  setViewingReceipt(expense.receiptUrl)
+                                }
                                 className="text-xs text-primary hover:underline"
                               >
                                 📷 View
@@ -178,7 +201,7 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
                                 categories={categories}
                                 onSuccess={onRefresh}
                                 editExpense={{
-                                  id: expense.id,
+                                  id: expense.id!,
                                   amount: expense.amount,
                                   description: expense.description,
                                   categoryId: expense.categoryId,
@@ -186,14 +209,16 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
                                   receiptUrl: expense.receiptUrl,
                                 }}
                                 trigger={
-                                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                                  <DropdownMenuItem
+                                    onSelect={(e) => e.preventDefault()}
+                                  >
                                     ✏️ Edit
                                   </DropdownMenuItem>
                                 }
                               />
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onClick={() => handleDelete(expense.id)}
+                                onClick={() => handleDelete(expense.id!)}
                               >
                                 🗑️ Delete
                               </DropdownMenuItem>
@@ -210,8 +235,14 @@ export function ExpenseList({ expenses, categories, onRefresh, currency = "USD" 
         </div>
       </ScrollArea>
 
-      <Dialog open={!!viewingReceipt} onOpenChange={() => setViewingReceipt(null)}>
-        <DialogContent data-design-id="receipt-viewer-dialog" className="sm:max-w-lg">
+      <Dialog
+        open={!!viewingReceipt}
+        onOpenChange={() => setViewingReceipt(null)}
+      >
+        <DialogContent
+          data-design-id="receipt-viewer-dialog"
+          className="sm:max-w-lg"
+        >
           <DialogHeader>
             <DialogTitle>Receipt</DialogTitle>
           </DialogHeader>

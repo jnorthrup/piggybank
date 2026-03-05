@@ -1,22 +1,29 @@
-import bcrypt from "bcrypt";
-import { prisma } from "./prisma";
-import type { Region } from "@prisma/client";
+import { db } from "./db";
 
-const SALT_ROUNDS = 10;
+async function sha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, SALT_ROUNDS);
+  const salt = crypto.randomUUID();
+  const hash = await sha256(password + salt);
+  return `${salt}:${hash}`;
 }
 
 export async function verifyPassword(
   password: string,
-  hashedPassword: string
+  storedPassword: string,
 ): Promise<boolean> {
-  return bcrypt.compare(password, hashedPassword);
+  const [salt, hash] = storedPassword.split(":");
+  const newHash = await sha256(password + salt);
+  return newHash === hash;
 }
 
 export async function findUserByEmail(email: string) {
-  return prisma.user.findUnique({ where: { email } });
+  return db.users.where("email").equals(email).first();
 }
 
 export async function createUser(
@@ -24,27 +31,27 @@ export async function createUser(
   password: string,
   name?: string,
   region?: string,
-  currency?: string
+  currency?: string,
 ) {
   const hashedPassword = await hashPassword(password);
-  return prisma.user.create({
-    data: {
-      email,
-      password: hashedPassword,
-      name: name || null,
-      region: (region as Region) || "US",
-      currency: currency || "USD",
-    },
-    select: { id: true, email: true, name: true, region: true, currency: true, createdAt: true },
+  const id = await db.users.add({
+    email,
+    password: hashedPassword,
+    name: name || undefined,
+    region: region || "US",
+    currency: currency || "USD",
+    createdAt: new Date(),
   });
+  return db.users.get(id);
 }
 
 export async function authenticateUser(email: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await db.users.where("email").equals(email).first();
   if (!user) return null;
 
   const isValid = await verifyPassword(password, user.password);
   if (!isValid) return null;
 
-  return { id: user.id, email: user.email, name: user.name, region: user.region, currency: user.currency, createdAt: user.createdAt };
+  const { password: _, ...userWithoutPassword } = user;
+  return userWithoutPassword;
 }

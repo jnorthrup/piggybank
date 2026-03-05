@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Calendar } from "@/components/ui/calendar";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +9,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -18,13 +23,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useAuth } from "@/lib/auth-context";
+import { db } from "@/lib/db";
 import { format } from "date-fns";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface Category {
-  id: string;
+  id?: number;
   name: string;
   icon: string;
   color: string;
@@ -34,87 +40,72 @@ interface ExpenseFormProps {
   categories: Category[];
   onSuccess: () => void;
   editExpense?: {
-    id: string;
+    id: number;
     amount: number;
-    description: string | null;
-    categoryId: string;
-    date: string;
-    receiptUrl: string | null;
+    description?: string;
+    categoryId: number;
+    date: Date;
+    receiptUrl?: string;
   };
   trigger?: React.ReactNode;
 }
 
-export function ExpenseForm({ categories, onSuccess, editExpense, trigger }: ExpenseFormProps) {
+export function ExpenseForm({
+  categories,
+  onSuccess,
+  editExpense,
+  trigger,
+}: ExpenseFormProps) {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [amount, setAmount] = useState(editExpense?.amount?.toString() || "");
-  const [description, setDescription] = useState(editExpense?.description || "");
-  const [categoryId, setCategoryId] = useState(editExpense?.categoryId || "");
-  const [date, setDate] = useState<Date>(editExpense?.date ? new Date(editExpense.date) : new Date());
-  const [receiptUrl, setReceiptUrl] = useState(editExpense?.receiptUrl || "");
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Upload failed");
-      }
-
-      const data = await res.json();
-      setReceiptUrl(data.url);
-      toast.success("Receipt uploaded!");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to upload receipt");
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  const [description, setDescription] = useState(
+    editExpense?.description || "",
+  );
+  const [categoryId, setCategoryId] = useState(
+    editExpense?.categoryId?.toString() || "",
+  );
+  const [date, setDate] = useState<Date>(
+    editExpense?.date ? new Date(editExpense.date) : new Date(),
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?.id) return;
+
     setIsLoading(true);
 
     try {
-      const url = editExpense ? `/api/expenses/${editExpense.id}` : "/api/expenses";
-      const method = editExpense ? "PUT" : "POST";
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: parseFloat(amount),
-          description: description || null,
-          categoryId,
-          date: date.toISOString(),
-          receiptUrl: receiptUrl || null,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save expense");
+      if (editExpense) {
+        await db.expenses.update(editExpense.id, {
+          amount: Number.parseFloat(amount),
+          description: description || undefined,
+          categoryId: Number.parseInt(categoryId),
+          date: date,
+          updatedAt: new Date(),
+        });
+        toast.success("Expense updated!");
+      } else {
+        await db.expenses.add({
+          userId: user.id,
+          amount: Number.parseFloat(amount),
+          description: description || undefined,
+          categoryId: Number.parseInt(categoryId),
+          date: date,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        toast.success("Expense added!");
       }
 
-      toast.success(editExpense ? "Expense updated!" : "Expense added!");
       setOpen(false);
       resetForm();
       onSuccess();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save expense");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save expense",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -126,7 +117,6 @@ export function ExpenseForm({ categories, onSuccess, editExpense, trigger }: Exp
       setDescription("");
       setCategoryId("");
       setDate(new Date());
-      setReceiptUrl("");
     }
   };
 
@@ -134,20 +124,30 @@ export function ExpenseForm({ categories, onSuccess, editExpense, trigger }: Exp
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {trigger || (
-          <Button data-design-id="add-expense-btn" className="gradient-primary text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all">
+          <Button
+            data-design-id="add-expense-btn"
+            className="gradient-primary text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all"
+          >
             <span className="mr-2">+</span> Add Expense
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent data-design-id="expense-form-dialog" className="sm:max-w-md">
+      <DialogContent
+        data-design-id="expense-form-dialog"
+        className="sm:max-w-md"
+      >
         <DialogHeader>
-          <DialogTitle data-design-id="expense-form-title">{editExpense ? "Edit Expense" : "Add New Expense"}</DialogTitle>
+          <DialogTitle data-design-id="expense-form-title">
+            {editExpense ? "Edit Expense" : "Add New Expense"}
+          </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           <div data-design-id="expense-amount-field" className="space-y-2">
             <Label htmlFor="amount">Amount</Label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                $
+              </span>
               <Input
                 id="amount"
                 type="number"
@@ -170,7 +170,7 @@ export function ExpenseForm({ categories, onSuccess, editExpense, trigger }: Exp
               </SelectTrigger>
               <SelectContent>
                 {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>
+                  <SelectItem key={cat.id} value={cat.id!.toString()}>
                     <span className="flex items-center gap-2">
                       <span>{cat.icon}</span>
                       <span>{cat.name}</span>
@@ -213,55 +213,6 @@ export function ExpenseForm({ categories, onSuccess, editExpense, trigger }: Exp
               onChange={(e) => setDescription(e.target.value)}
               className="h-11"
             />
-          </div>
-
-          <div data-design-id="expense-receipt-field" className="space-y-2">
-            <Label>Receipt Photo</Label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-            {receiptUrl ? (
-              <div className="relative">
-                <img
-                  src={receiptUrl}
-                  alt="Receipt"
-                  className="w-full h-32 object-cover rounded-lg border"
-                />
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  className="absolute top-2 right-2"
-                  onClick={() => setReceiptUrl("")}
-                >
-                  Remove
-                </Button>
-              </div>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full h-20 border-dashed"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-              >
-                {isUploading ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                    Uploading...
-                  </span>
-                ) : (
-                  <span className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">📷</span>
-                    <span className="text-sm text-muted-foreground">Click to upload receipt</span>
-                  </span>
-                )}
-              </Button>
-            )}
           </div>
 
           <div className="flex gap-3 pt-4">
